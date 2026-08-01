@@ -6,7 +6,7 @@ DJミックスやロック画面の再生スクリーンショットをアップ
 
 ## できること
 
-1. **スクショをアップロード** — ドラッグ&ドロップ or タップで選択
+1. **スクショをアップロード** — ドラッグ&ドロップ or タップで選択、`Ctrl`+`V` 貼り付けにも対応
 2. **ブラウザ内OCR** — Tesseract.js が画像を解析し、曲名・アーティスト・経過時間・エピソードを抽出（サーバーOCR不要・無料）
 3. **曲リンクを検索** — 抽出結果は編集可能。正解度が高い順に結果を表示
 
@@ -24,22 +24,26 @@ APIキー不要で動きます。
 
 ## 技術スタック
 
+- [Svelte 5](https://svelte.dev/) + [Vite](https://vite.dev/) + TypeScript (strict) — SPA
 - [Cloudflare Workers](https://developers.cloudflare.com/workers/) — 静的アセット配信 + `/api/search` API
 - [Tesseract.js](https://tesseract.projectnaptha.com/) — ブラウザ内OCR
-- バニラJS (フレームワークなし)
 
 ## ディレクトリ構成
 
 ```
 src/
-  worker.js          # Worker本体 (静的アセット + /api/search)
-  public/
-    index.html       # UI
-    app.js           # OCRフロー + 検索結果表示
-    parse.js         # OCRテキスト解析 (純関数・Nodeでもテスト可)
-    style.css        # ダークミュージックアプリ風スタイル
-test-parse.js        # parse.js の実行可能チェック
-wrangler.toml        # Cloudflare Workers 設定
+  worker.js            # Worker本体 (dist配信 + /api/search)
+  main.ts              # Svelteエントリポイント
+  App.svelte           # メインUI (アップロード / OCR結果 / 検索)
+  app.css              # ダークミュージックアプリ風スタイル
+  lib/
+    types.ts           # SearchResult / ParsedOcr などの型定義
+    platforms.ts       # プラットフォームのメタデータ
+    parse.ts           # OCRテキスト解析 (純関数・Nodeでもテスト可)
+    ocr.ts             # Tesseract.js ラッパー (CDN版, worker再利用)
+    ResultCard.svelte  # 検索結果カード
+test-parse.ts          # parse.ts の実行可能チェック (bun)
+wrangler.toml          # Cloudflare Workers 設定 (assets = dist)
 ```
 
 ## ローカル開発
@@ -48,14 +52,23 @@ wrangler.toml        # Cloudflare Workers 設定
 # 依存ツール
 bun 1.x / node 22+ / wrangler 4.x
 
-# ローカル実行
+# 依存インストール
+bun install
+
+# 型チェック (svelte-check)
+bun run check
+
+# ビルド
+bun run build
+
+# ローカル実行 (ビルド後の dist + Worker API)
 wrangler dev --port 8787
 
 # パーサーの実行可能チェック
-node test-parse.js
+bun run test
 
 # デプロイ
-wrangler deploy
+bun run build && wrangler deploy
 ```
 
 ## 仕組みのメモ

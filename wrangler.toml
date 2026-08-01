@@ -7,6 +7,6 @@ routes = [
 ]
 
 [assets]
-directory = "./src/public"
+directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"

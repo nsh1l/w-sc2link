@@ -4,6 +4,9 @@
 # Node
 node_modules/
 
+# Build output
+dist/
+
 # OS
 .DS_Store
 
@@ -12,3 +15,6 @@ node_modules/
 *.jpeg
 *.png
 !src/public/*.svg
+
+# Local E2E artifacts
+.e2e/
