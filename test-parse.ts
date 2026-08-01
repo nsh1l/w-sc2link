@@ -104,4 +104,53 @@ const scE = relScore({ title: 'Angels Cried', artist: 'The Isley Brothers' }, 'W
 console.log('relScore 和名:', scD, 'vs', scE);
 assert.ok(scD > scE, `When Angels Cried 正解が上に来ない: ${scD} vs ${scE}`);
 
+// 実スクショ由来の回帰ケース: OCRがダッシュを emダッシュ（—）で読んでもスクラバー検出できる
+const emDashSample = `docomo ul > 1)
+31H (A) #& 22°C|11°C 650%
+18:27
+SOULECTION RADIO [Sy
+Father Stretch My Hands [Edit]
+Full Crate & Jarreau Vandal
+44:02 —1:17:01`;
+const emDash = parseOcrText(emDashSample);
+assert.strictEqual(emDash.title, 'Father Stretch My Hands [Edit]', `emDash title: ${emDash.title}`);
+assert.strictEqual(emDash.artist, 'Full Crate & Jarreau Vandal', `emDash artist: ${emDash.artist}`);
+assert.strictEqual(emDash.elapsed, '44:02', `emDash elapsed: ${emDash.elapsed}`);
+
+// 実スクショ由来: SoundCloudの「UIヘッダ + 曲名」— 絵文字残骸のあるヘッダ行をタイトルにしない
+const headerSample = `MAKE FOR U q))) (Ry
+My Reason
+
+© I o
+
+9:05 —1:51:45`;
+const header = parseOcrText(headerSample);
+assert.strictEqual(header.title, 'My Reason', `header title: ${header.title}`);
+assert.strictEqual(header.elapsed, '9:05', `header elapsed: ${header.elapsed}`);
+
+// 実スクショ由来: 飾り線ノイズ（= —）と先頭引用符（‘ ’）を除去
+const decorSample = `‘LoFi House Mix 1988 | The Stoner House = —
+» Edition by Katarakt _ ————— :
+Fear N Loathing
+i! Behind this track`;
+const decor = parseOcrText(decorSample);
+assert.ok(decor.title.includes('LoFi House'), `decor title: ${decor.title}`);
+assert.ok(!decor.title.includes('='), `decor title に飾り線: ${decor.title}`);
+assert.ok(decor.artist.toLowerCase().includes('edition by katarakt'), `decor artist: ${decor.artist}`);
+
+// 実スクショ由来: アーティスト行の「| 再生数」ノイズと、3文字ゴミ行（pq a）
+const artistNoiseSample = `pq a
+THE PROTOTYPE
+jireh! | 9 sessuialll
+| Behind this track`;
+const artistNoise = parseOcrText(artistNoiseSample);
+assert.strictEqual(artistNoise.title, 'THE PROTOTYPE', `artistNoise title: ${artistNoise.title}`);
+assert.strictEqual(artistNoise.artist, 'jireh!', `artistNoise artist: ${artistNoise.artist}`);
+
+// 実タイトル保護: "On & On" / "Let It Go" の末尾単語を壊さない
+const shortWord = parseOcrText('On & On\nSomeone\n1:02:03 -1:10:00');
+assert.strictEqual(shortWord.title, 'On & On', `shortWord title: ${shortWord.title}`);
+const letItGo = parseOcrText('Let It Go\nIdina Menzel\n3:20 -4:10');
+assert.strictEqual(letItGo.title, 'Let It Go', `letItGo title: ${letItGo.title}`);
+
 console.log('✅ parse.ts 全チェック通過');

@@ -7,8 +7,15 @@ function norm(l: string): string {
 }
 
 // スクラバー行: 「経過 … -残り」(例: 1:08:03 GEE -53:25 / 41:37 -1:19:26)
+// 経過側がOCRで化けた場合（例: 002 -1:17:01）も「-残り」を含む行として判定する
+// OCRはダッシュを emダッシュ（—）/ enダッシュ（–）で読むことがあるため、3種とも扱う
 function isScrubberLine(l: string): boolean {
-  return /^\d{1,2}:\d{2}(?::\d{2})?.*-\s*\d{1,2}:\d{2}(?::\d{2})?/.test(norm(l));
+  const n = norm(l);
+  const dash = '[-–—]';
+  return (
+    new RegExp(`^\\d{1,2}:\\d{2}(?::\\d{2})?.*${dash}\\s*\\d{1,2}:\\d{2}(?::\\d{2})?`).test(n) ||
+    new RegExp(`${dash}{1,2}\\s*\\d{1,2}:\\d{2}(?::\\d{2})?\\s*$`).test(n)
+  );
 }
 
 // ウィジェット候補のゆるい妥当性判定: 文字が十分ある＆数字より文字が多いだけ。
@@ -20,13 +27,44 @@ function plausibleText(l: string, minLetters: number): boolean {
   return letters >= minLetters && letters > digits && n.length >= 4;
 }
 
-// 表示用クリーニング: 末尾のOCRノイズ（"LL" / " nl)" 等）と先頭の小文字ゴミ（"fr " 等）を除去
+// 表示用クリーニング: OCRノイズ除去。
+// 注意: 実タイトルの短い単語（"Moving Day" の "Day"、"tv off (Sade mix)" の "mix)"）は壊さないこと。
+// 大文字2-3字の末尾除去はやめた: "On & On" の "On"、"Let It Go" の "Go" を破壊するため
+// （OCRの " LL" ノイズは絵文字残骸・飾り線ルールでカバーされる）
 function cleanTitle(s: string): string {
   return String(s)
-    .replace(/\s+[A-Za-z]{2,3}$/, '') // 末尾の2-3文字ノイズ（例: " LL"）— 実タイトルの " (12\" Mix)" は4文字以上で対象外
-    .replace(/\s+[a-z]{1,3}\)$/, '') // 末尾の小文字+閉じ括弧ノイズ（例: " nl)"）
+    .replace(/\)\s+[A-Z]{2,3}$/, ')') // 閉じ括弧の直後の大文字ノイズ（例: "(RsCNHOO01) LL" → "(RsCNHOO01)"）
+    .replace(/\s+[a-z]{1,2}\)$/, '') // 末尾の小文字+閉じ括弧ノイズ（例: " nl)"）— " mix)" は3文字で対象外
+    .replace(/\s+[=—_][=—_\-–—\s:]*$/, '') // 飾り線（例: " = —"、" _ ————— :"）
+    .replace(/\s+[a-z]{1,3}[)）]{2,}.*$/, '') // 絵文字残骸（例: " q))) (Ry"）
+    .replace(/\[[A-Za-z]{1,3}$/, '') // 切れかけ括弧（例: " [Sy"）— "[Edit]" は閉じ括弧があるので対象外
     .replace(/^[a-z]{1,3}\s+(?=[A-Z])/, '') // 先頭の小文字ゴミ（例: "fr "）
     .trim();
+}
+
+// アーティスト用クリーニング: SoundCloud の「アーティスト | 再生数」ノイズと飾り線を除去
+function cleanArtist(s: string): string {
+  return String(s)
+    .replace(/\s*\|\s*\d.*$/, '') // "jireh! | 9 sessuialll" → "jireh!"（右辺が数字始まりのみ）
+    .replace(/\s+[=—_][=—_\-–—\s:]*$/, '')
+    .trim();
+}
+
+// OCRノイズ行かどうか（絵文字残骸・切れかけ括弧・飾り線）。
+// ノイズを含む行はUIヘッダ（プレイリスト名等）の可能性が高く、タイトル/アーティスト判定の参考にする
+function hasNoise(l: string): boolean {
+  const n = l.trim();
+  return (
+    /[a-z]{1,3}[)）]{2,}/.test(n) ||
+    /\[[A-Za-z]{1,3}$/.test(n) ||
+    /[=—_][=—_\-–—\s:]*$/.test(n)
+  );
+}
+
+// 飾り線行かどうか（波形UIのゴミ: "CGEEEEESS———" 等）。
+// 行末にダッシュ/アンダースコア/イコールが2連続以上ある行は、タイトル候補から外す
+function isDecorationLine(l: string): boolean {
+  return /[-–—_=]{2,}\s*$/.test(l.trim());
 }
 
 export function parseOcrText(text: string): ParsedOcr {
@@ -45,18 +83,50 @@ export function parseOcrText(text: string): ParsedOcr {
     .filter(({ l, i }) => !(i === 0 && /^\d{1,2}:\d{2}/.test(l)));
   // スクラバーより上（=ウィジェット/アートワーク領域）の行だけを候補に
   const pool = scrubIdx >= 0 ? clean.filter(({ i }) => i < scrubIdx) : clean;
-  const poolLines = pool.map(({ l }) => l);
+  const poolLines = pool.map(({ l }) => norm(l));
   let title = '';
   let artist = '';
 
   // iOSロック画面パターン: スクラバーの直上がアーティスト、その上がタイトル（ウィジェット構造）
+  // 注: 長さ比較（t.length >= a.length）はしない。短いタイトル+長いアーティスト
+  // （"Let It Go" / "Idina Menzel" 等）を取りこぼすため
   if (scrubIdx >= 2 && poolLines.length >= 2) {
-    const a = poolLines[poolLines.length - 1];
-    const t = poolLines[poolLines.length - 2];
-    if (plausibleText(t, 4) && plausibleText(a, 3) && t.length >= a.length) {
-      title = cleanTitle(t);
-      artist = a.trim();
+    let a = poolLines[poolLines.length - 1];
+    let t = poolLines[poolLines.length - 2];
+    // 直上が飾り線（波形UIのゴミ）なら、さらに上の行を候補に（例: BCHNN _ / CGEEEEESS———）
+    if (isDecorationLine(a) && poolLines.length >= 3) {
+      a = poolLines[poolLines.length - 2];
+      t = poolLines[poolLines.length - 3];
+    }
+    if (plausibleText(t, 4) && plausibleText(a, 3)) {
+      // 上の行にノイズ（絵文字残骸等）があり下がクリーンなら「UIヘッダ + 曲名」の可能性が高い。
+      // 例: "MAKE FOR U q))) (Ry" / "My Reason" → タイトルは My Reason
+      if (hasNoise(t) && !hasNoise(a)) {
+        title = cleanTitle(a);
+        artist = '';
+      } else {
+        title = cleanTitle(t);
+        artist = cleanArtist(a);
+      }
       return { title, artist, elapsed, episode };
+    }
+  }
+
+  // スクラバーなし（SoundCloud系など）: 先頭から順に plausible な2行をタイトル/アーティストに。
+  // アプリUIのヘッダは「タイトル→アーティスト」の順で並ぶため、最長行方式より確実。
+  if (scrubIdx < 0 && poolLines.length >= 1) {
+    const idxs: number[] = [];
+    poolLines.forEach((l, i) => {
+      if (plausibleText(l, 4)) idxs.push(i); // 4文字以上（"pq a" 等の3文字ゴミを弾く）
+    });
+    if (idxs.length >= 2) {
+      const t = poolLines[idxs[0]];
+      const a = poolLines[idxs[1]];
+      if (t.length >= 3) {
+        title = cleanTitle(t);
+        artist = cleanArtist(a);
+        return { title, artist, elapsed, episode };
+      }
     }
   }
 
@@ -67,18 +137,22 @@ export function parseOcrText(text: string): ParsedOcr {
       if (l.length > poolLines[titleIdx].length) titleIdx = i;
     });
     title = cleanTitle(poolLines[titleIdx]);
-    if (poolLines[titleIdx + 1]) artist = poolLines[titleIdx + 1].trim();
+    if (poolLines[titleIdx + 1]) artist = cleanArtist(poolLines[titleIdx + 1]);
   }
   return { title, artist, elapsed, episode };
 }
 
 export function extractElapsed(text: string): string {
   // スクラバー行（「経過 - 残り」、残りは MM:SS または H:MM:SS）を優先
-  const m = text.match(/(\d{1,2}:\d{2}(?::\d{2})?)[^\n]*?-\s*\d{1,2}:\d{2}(?::\d{2})?/);
+  // OCRはダッシュを em/enダッシュで読むことがあるため、3種とも扱う
+  const m = text.match(/(\d{1,2}:\d{2}(?::\d{2})?)[^\n]*?[-–—]\s*\d{1,2}:\d{2}(?::\d{2})?/);
   if (m) return m[1];
-  // フォールバック: 最後に出てくる単独の時刻（ステータスバーの時計より再生位置が後にあることが多い）
-  const all = [...text.matchAll(/\d{1,2}:\d{2}(?::\d{2})?/g)];
-  return all.length ? all[all.length - 1][0] : '';
+  // SoundCloud の「0:03 | 2:04」形式（縦棒区切り）
+  const sc = text.match(/(\d{1,2}:\d{2}(?::\d{2})?)\s*\|\s*\d{1,2}:\d{2}(?::\d{2})?/);
+  if (sc) return sc[1];
+  // フォールバックは使わない: 「最後の時刻」はステータスバーの時計や残り時間を拾いがちで、
+  // 誤った「再生位置」を表示するより空のままの方が誠実。
+  return '';
 }
 
 export function extractEpisode(text: string): string {
@@ -89,12 +163,18 @@ export function extractEpisode(text: string): string {
 
 export function keepLine(l: string): boolean {
   const n = norm(l);
-  if (n.length < 3) return false;
+  const alnum = (n.match(/[a-zA-Z0-9ぁ-んァ-ヶ一-龯]/g) || []).length;
+  if (alnum < 3) return false; // 英数字が3文字未満（"I o" 等のゴミを弾く）
   if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(n)) return false; // 時刻だけ
   if (isScrubberLine(n)) return false; // 経過+残り
   if (/^mvh/i.test(n)) return false; // 再生デバイス名
   if (/^[0-9]+$/.test(n)) return false; // 数字だけ（エピソード番号など）
-  const alnum = (n.match(/[a-zA-Z0-9ぁ-んァ-ヶ一-龯]/g) || []).length;
+  // ステータスバー行: キャリア名・天気（iOSロック画面の日付/気温行）
+  if (/^(docomo|au|softbank|ntt|vodafone|kddi|mvno)/i.test(n)) return false;
+  if (/°[cCfF]/.test(n)) return false;
+  // 音楽アプリUIの固定ラベル（SoundCloud の波形コメントUI等）はタイトル候補から除外
+  if (/behind this track/i.test(n)) return false;
+  if (/^comment/i.test(n)) return false;
   if (alnum / n.length < 0.4) return false; // 記号ばかり
   return true;
 }
