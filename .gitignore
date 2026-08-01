@@ -1,0 +1,14 @@
+# Cloudflare local dev state
+.wrangler/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+
+# Local test images (never commit real screenshots)
+*.jpg
+*.jpeg
+*.png
+!src/public/*.svg

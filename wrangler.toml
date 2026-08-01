@@ -1,0 +1,12 @@
+name = "ayp-trackid"
+main = "src/worker.js"
+compatibility_date = "2025-06-01"
+
+routes = [
+  { pattern = "trackid.alwaysyesterday.party", custom_domain = true }
+]
+
+[assets]
+directory = "./src/public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
