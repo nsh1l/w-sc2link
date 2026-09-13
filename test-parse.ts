@@ -117,6 +117,48 @@ assert.strictEqual(emDash.title, 'Father Stretch My Hands [Edit]', `emDash title
 assert.strictEqual(emDash.artist, 'Full Crate & Jarreau Vandal', `emDash artist: ${emDash.artist}`);
 assert.strictEqual(emDash.elapsed, '44:02', `emDash elapsed: ${emDash.elapsed}`);
 
+// 実スクショ由来: Apple Musicロック画面で、残り時間のマイナスが「~」に化けるケース
+const appleLockSample = `UQ mobil N @ wil5G@ )
+EcAITFLCOY 7 BER
+@ Music
+(— EXCHANGE
+prodbyswayze
+2:47 « ~2:00:03
+oO ll © «`;
+const appleLock = parseOcrText(appleLockSample);
+assert.strictEqual(appleLock.title, 'EXCHANGE', `appleLock title: ${appleLock.title}`);
+assert.strictEqual(appleLock.artist, 'prodbyswayze', `appleLock artist: ${appleLock.artist}`);
+assert.strictEqual(appleLock.elapsed, '2:47', `appleLock elapsed: ${appleLock.elapsed}`);
+
+// 同じ実スクショの別PSM出力: 経過時間と残り時間が別行に分かれるケース
+const appleLockSplitSample = `UQ mobil N @
+s!5G @)
+SOULECTION RADIO
+745
+EXCHANGE
+prodbyswayze
+2:47 @
+-2:00:03
+®`;
+const appleLockSplit = parseOcrText(appleLockSplitSample);
+assert.strictEqual(appleLockSplit.title, 'EXCHANGE', `appleLockSplit title: ${appleLockSplit.title}`);
+assert.strictEqual(appleLockSplit.artist, 'prodbyswayze', `appleLockSplit artist: ${appleLockSplit.artist}`);
+assert.strictEqual(appleLockSplit.elapsed, '2:47', `appleLockSplit elapsed: ${appleLockSplit.elapsed}`);
+
+// 実corpus由来: 経過時間側が「002」に崩れても、残り時間をアンカーに曲情報を救う
+const damagedElapsedSample = `docomo ntsc)
+31H (A) #* 22°C|11°C 650%
+18:27
+SOULECTION RADIO [BY
+Father Stretch My Hands [Edit]
+Full Crate & Jarreau Vandal
+002 -1:17:01
+ot ® «`;
+const damagedElapsed = parseOcrText(damagedElapsedSample);
+assert.strictEqual(damagedElapsed.title, 'Father Stretch My Hands [Edit]', `damagedElapsed title: ${damagedElapsed.title}`);
+assert.strictEqual(damagedElapsed.artist, 'Full Crate & Jarreau Vandal', `damagedElapsed artist: ${damagedElapsed.artist}`);
+assert.strictEqual(damagedElapsed.elapsed, '', `damagedElapsed elapsed: ${damagedElapsed.elapsed}`);
+
 // 実スクショ由来: SoundCloudの「UIヘッダ + 曲名」— 絵文字残骸のあるヘッダ行をタイトルにしない
 const headerSample = `MAKE FOR U q))) (Ry
 My Reason

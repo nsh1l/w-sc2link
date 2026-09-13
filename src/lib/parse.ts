@@ -6,16 +6,34 @@ function norm(l: string): string {
   return l.replace(/^[^a-zA-Z0-9ぁ-んァ-ヶ一-龯]+/, '').trim();
 }
 
+const timePattern = '\\d{1,2}:\\d{2}(?::\\d{2})?';
+const scrubberSignPattern = '[-–—−~]';
+
+function isElapsedOnlyLine(l: string): boolean {
+  return new RegExp(`^${timePattern}\\s*[^a-zA-Z0-9ぁ-んァ-ヶ一-龯]*$`).test(l.trim());
+}
+
+function isRemainingTimeLine(l: string): boolean {
+  return new RegExp(`^${scrubberSignPattern}\\s*${timePattern}\\s*$`).test(l.trim());
+}
+
 // スクラバー行: 「経過 … -残り」(例: 1:08:03 GEE -53:25 / 41:37 -1:19:26)
 // 経過側がOCRで化けた場合（例: 002 -1:17:01）も「-残り」を含む行として判定する
-// OCRはダッシュを emダッシュ（—）/ enダッシュ（–）で読むことがあるため、3種とも扱う
+// OCRはダッシュを em/enダッシュ、Unicodeマイナス、チルダ（~）で読むことがあるため、時刻の前だけ扱う
 function isScrubberLine(l: string): boolean {
   const n = norm(l);
-  const dash = '[-–—]';
   return (
-    new RegExp(`^\\d{1,2}:\\d{2}(?::\\d{2})?.*${dash}\\s*\\d{1,2}:\\d{2}(?::\\d{2})?`).test(n) ||
-    new RegExp(`${dash}{1,2}\\s*\\d{1,2}:\\d{2}(?::\\d{2})?\\s*$`).test(n)
+    new RegExp(`^${timePattern}.*${scrubberSignPattern}\\s*${timePattern}`).test(n) ||
+    isRemainingTimeLine(l) ||
+    new RegExp(`^\\d{1,3}\\s*${scrubberSignPattern}\\s*${timePattern}\\s*$`).test(l.trim())
   );
+}
+
+function findScrubberIndex(lines: string[]): number {
+  for (let i = 0; i + 1 < lines.length; i += 1) {
+    if (isElapsedOnlyLine(lines[i]) && isRemainingTimeLine(lines[i + 1])) return i;
+  }
+  return lines.findIndex(isScrubberLine);
 }
 
 // ウィジェット候補のゆるい妥当性判定: 文字が十分ある＆数字より文字が多いだけ。
@@ -75,7 +93,7 @@ export function parseOcrText(text: string): ParsedOcr {
   const elapsed = extractElapsed(text);
   const episode = extractEpisode(text);
   // スクラバー行は keepLine で除外される前に生の lines から位置を特定する
-  const scrubIdx = lines.findIndex(isScrubberLine);
+  const scrubIdx = findScrubberIndex(lines);
   const clean = lines
     .map((l, i) => ({ l, i }))
     .filter(({ l }) => keepLine(l))
@@ -144,9 +162,17 @@ export function parseOcrText(text: string): ParsedOcr {
 
 export function extractElapsed(text: string): string {
   // スクラバー行（「経過 - 残り」、残りは MM:SS または H:MM:SS）を優先
-  // OCRはダッシュを em/enダッシュで読むことがあるため、3種とも扱う
-  const m = text.match(/(\d{1,2}:\d{2}(?::\d{2})?)[^\n]*?[-–—]\s*\d{1,2}:\d{2}(?::\d{2})?/);
+  // OCRは負符号を em/enダッシュ、Unicodeマイナス、チルダで読むことがある
+  const m = text.match(new RegExp(`(${timePattern})[^\\n]*?${scrubberSignPattern}\\s*${timePattern}`));
   if (m) return m[1];
+  // OCRのレイアウト判定によって「経過」と「残り」が別行になる場合
+  const split = text.match(
+    new RegExp(
+      `(?:^|\\n)(${timePattern})\\s*[^a-zA-Z0-9ぁ-んァ-ヶ一-龯\\n]*\\n\\s*${scrubberSignPattern}\\s*${timePattern}`,
+      'm'
+    )
+  );
+  if (split) return split[1];
   // SoundCloud の「0:03 | 2:04」形式（縦棒区切り）
   const sc = text.match(/(\d{1,2}:\d{2}(?::\d{2})?)\s*\|\s*\d{1,2}:\d{2}(?::\d{2})?/);
   if (sc) return sc[1];
