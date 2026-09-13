@@ -9,6 +9,7 @@ DJミックスやロック画面の再生スクリーンショットをアップ
 1. **スクショをアップロード** — ドラッグ&ドロップ or タップで選択、`Ctrl`+`V` 貼り付けにも対応
 2. **ブラウザ内OCR** — Tesseract.js が画像を解析し、曲名・アーティスト・経過時間・エピソードを抽出（サーバーOCR不要・無料）
 3. **曲リンクを検索** — 抽出結果は編集可能。正解度が高い順に結果を表示
+4. **LINE Bot** — スクショ画像を送ると、Workers AI が曲名・アーティストを読み取り候補リンクを返信
 
 検索プラットフォーム:
 
@@ -20,19 +21,20 @@ DJミックスやロック画面の再生スクリーンショットをアップ
 | YouTube | InnerTube API (公式Webの公開クライアントキー) |
 | Bandcamp / Google | 外部検索リンク (フォールバック) |
 
-APIキー不要で動きます。
+Web UIの検索はAPIキー不要です。LINE連携を使う場合だけ、LINE Developersのチャネルシークレット／チャネルアクセストークンが必要です。
 
 ## 技術スタック
 
 - [Svelte 5](https://svelte.dev/) + [Vite](https://vite.dev/) + TypeScript (strict) — SPA
-- [Cloudflare Workers](https://developers.cloudflare.com/workers/) — 静的アセット配信 + `/api/search` API
+- [Cloudflare Workers](https://developers.cloudflare.com/workers/) — 静的アセット配信 + `/api/search` + LINE Webhook
+- [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) — LINE画像の曲情報抽出 (`mistral-small-3.1-24b-instruct`)
 - [Tesseract.js](https://tesseract.projectnaptha.com/) — ブラウザ内OCR
 
 ## ディレクトリ構成
 
 ```
 src/
-  worker.js            # Worker本体 (dist配信 + /api/search)
+  worker.js            # Worker本体 (dist配信 + /api/search + /api/line/webhook)
   main.ts              # Svelteエントリポイント
   App.svelte           # メインUI (アップロード / OCR結果 / 検索)
   app.css              # ダークミュージックアプリ風スタイル
@@ -71,9 +73,32 @@ bun run test
 bun run build && wrangler deploy
 ```
 
+### LINE Botのローカル設定
+
+`.dev.vars.example` を `.dev.vars` にコピーし、LINE Developers Consoleの値を設定します。`.dev.vars` はGit管理対象外です。
+
+```bash
+cp .dev.vars.example .dev.vars
+```
+
+LINE Developers ConsoleのWebhook URLには、次を設定します。
+
+```text
+https://trackid.alwaysyesterday.party/api/line/webhook
+```
+
+Webhookの署名をWorker側で検証した後、LINE Content APIから画像を取得し、Workers AIで曲名・アーティストを抽出します。候補リンクは既存のSoundCloud / Deezer / Apple Music / YouTube検索結果からのみ作成します。画像やLINE秘密情報をブラウザへ返したり、ログへ出力したりしません。
+
+本番Secretは値をコマンドラインへ書かず、Wranglerの対話入力で登録します。
+
+```bash
+wrangler secret put LINE_CHANNEL_SECRET
+wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
+```
+
 ## 仕組みのメモ
 
-- OCRはブラウザ側で実行するため、画像はサーバーに送信されません。
+- Web UIのOCRはブラウザ側で実行するため、Web UIで選んだ画像はサーバーに送信されません。LINE Botの画像は、LINE Webhook処理のためWorkerからLINE Content APIへ取得し、Workers AIへ送信します。
 - OCR前に画像を2倍に拡大 → グレースケール → コントラスト正規化しています（小さい文字・ダークUIのスクショでも拾いやすくするため）。
 - OCRテキストの解析は純関数（`src/lib/parse.ts`）で、実スクショのOCR出力を回帰テスト（`test-parse.ts`）で検証しています。UIヘッダ・波形UIの飾り線・絵文字残骸・キャリア名/天気のステータスバー行・OCRのemダッシュ誤読などに対応。
 - SoundCloud の公開 `client_id` は定期的にローテーションするため、ランタイムで `soundcloud.com` のJSチャンクから取得し、失敗時は既知値にフォールバックします。

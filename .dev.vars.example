@@ -1,0 +1,3 @@
+# Copy to .dev.vars and fill with the values from LINE Developers Console.
+LINE_CHANNEL_SECRET=
+LINE_CHANNEL_ACCESS_TOKEN=
