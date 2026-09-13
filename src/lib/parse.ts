@@ -9,8 +9,15 @@ function norm(l: string): string {
 const timePattern = '\\d{1,2}:\\d{2}(?::\\d{2})?';
 const scrubberSignPattern = '[-–—−~]';
 
+function elapsedOnlyValue(l: string): string {
+  const m = l
+    .trim()
+    .match(new RegExp(`^(${timePattern})\\s*[^a-zA-Z0-9ぁ-んァ-ヶ一-龯]*$`));
+  return m?.[1] || '';
+}
+
 function isElapsedOnlyLine(l: string): boolean {
-  return new RegExp(`^${timePattern}\\s*[^a-zA-Z0-9ぁ-んァ-ヶ一-龯]*$`).test(l.trim());
+  return Boolean(elapsedOnlyValue(l));
 }
 
 function isRemainingTimeLine(l: string): boolean {
@@ -33,7 +40,26 @@ function findScrubberIndex(lines: string[]): number {
   for (let i = 0; i + 1 < lines.length; i += 1) {
     if (isElapsedOnlyLine(lines[i]) && isRemainingTimeLine(lines[i + 1])) return i;
   }
-  return lines.findIndex(isScrubberLine);
+  const scrubberIdx = lines.findIndex(isScrubberLine);
+  if (scrubberIdx >= 0) return scrubberIdx;
+
+  // 残り時間が消えた場合も、後半の単独時刻の前に有力な2行があるときだけ境界にする
+  // ponytail: 行位置ヒューリスティックの上限は、将来OCR bounding boxでUI領域を分離して解消する
+  return findStandaloneElapsed(lines)?.index ?? -1;
+}
+
+function findStandaloneElapsed(lines: string[]): { index: number; elapsed: string } | null {
+  for (let i = lines.length - 1; i >= Math.ceil(lines.length / 2); i -= 1) {
+    const elapsed = elapsedOnlyValue(lines[i]);
+    if (!elapsed) continue;
+    const candidates = lines
+      .slice(0, i)
+      .filter(keepLine)
+      .map(norm)
+      .filter((line) => plausibleText(line, 3));
+    if (candidates.length >= 2) return { index: i, elapsed };
+  }
+  return null;
 }
 
 // ウィジェット候補のゆるい妥当性判定: 文字が十分ある＆数字より文字が多いだけ。
@@ -173,6 +199,13 @@ export function extractElapsed(text: string): string {
     )
   );
   if (split) return split[1];
+  const standalone = findStandaloneElapsed(
+    (text || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+  );
+  if (standalone) return standalone.elapsed;
   // SoundCloud の「0:03 | 2:04」形式（縦棒区切り）
   const sc = text.match(/(\d{1,2}:\d{2}(?::\d{2})?)\s*\|\s*\d{1,2}:\d{2}(?::\d{2})?/);
   if (sc) return sc[1];
@@ -196,7 +229,7 @@ export function keepLine(l: string): boolean {
   if (/^mvh/i.test(n)) return false; // 再生デバイス名
   if (/^[0-9]+$/.test(n)) return false; // 数字だけ（エピソード番号など）
   // ステータスバー行: キャリア名・天気（iOSロック画面の日付/気温行）
-  if (/^(docomo|au|softbank|ntt|vodafone|kddi|mvno)/i.test(n)) return false;
+  if (/^(docomo|au|softbank|ntt|vodafone|kddi|mvno|uq(?:\s|$))/i.test(n)) return false;
   if (/°[cCfF]/.test(n)) return false;
   // 音楽アプリUIの固定ラベル（SoundCloud の波形コメントUI等）はタイトル候補から除外
   if (/behind this track/i.test(n)) return false;

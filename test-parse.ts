@@ -145,6 +145,19 @@ assert.strictEqual(appleLockSplit.title, 'EXCHANGE', `appleLockSplit title: ${ap
 assert.strictEqual(appleLockSplit.artist, 'prodbyswayze', `appleLockSplit artist: ${appleLockSplit.artist}`);
 assert.strictEqual(appleLockSplit.elapsed, '2:47', `appleLockSplit elapsed: ${appleLockSplit.elapsed}`);
 
+// 同じ実スクショのraw PSM 3出力: 残り時間が消えても、後半の経過時刻をカード境界に使う
+const appleLockPartialSample = `UQ mobil N @
+SOULECTION RADIO
+745
+EXCHANGE
+prodbyswayze
+2:47 @
+®`;
+const appleLockPartial = parseOcrText(appleLockPartialSample);
+assert.strictEqual(appleLockPartial.title, 'EXCHANGE', `appleLockPartial title: ${appleLockPartial.title}`);
+assert.strictEqual(appleLockPartial.artist, 'prodbyswayze', `appleLockPartial artist: ${appleLockPartial.artist}`);
+assert.strictEqual(appleLockPartial.elapsed, '2:47', `appleLockPartial elapsed: ${appleLockPartial.elapsed}`);
+
 // 実corpus由来: 経過時間側が「002」に崩れても、残り時間をアンカーに曲情報を救う
 const damagedElapsedSample = `docomo ntsc)
 31H (A) #* 22°C|11°C 650%
