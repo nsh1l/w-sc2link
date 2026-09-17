@@ -139,6 +139,19 @@ kbd {
 /* 結果 */
 .results-title { margin: 4px 0 14px; font-family: var(--font-display); font-size: 18px; }
 #results-count { color: var(--accent-1); font-size: 14px; }
+.best-match {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--border, var(--card-border));
+}
+.best-match h3 { margin: 0; color: var(--navy, var(--text)); font-size: 16px; line-height: 1.4; }
+.best-match p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.best-match .result-card {
+  border-color: var(--signal, var(--accent-2));
+  background: var(--canvas, var(--card));
+}
 .results { display: grid; gap: 10px; }
 .result-card {
   display: flex; align-items: center; gap: 13px; padding: 10px 14px; text-decoration: none; color: inherit;

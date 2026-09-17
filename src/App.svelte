@@ -232,8 +232,15 @@
   {#if resultsShown}
     <section class="card" aria-label="検索結果">
       <h2 class="results-title">見つかったリンク {#if sortedResults.length}<span id="results-count">{sortedResults.length}件</span>{/if}</h2>
+      {#if sortedResults.length}
+        <section class="best-match" aria-labelledby="best-match-title">
+          <h3 id="best-match-title">最有力候補</h3>
+          <p>入力内容にもっとも近い候補です。内容を確認してから開いてね。</p>
+          <ResultCard result={sortedResults[0]} />
+        </section>
+      {/if}
       <div class="results">
-        {#each sortedResults as r (r.url)}
+        {#each sortedResults.slice(1) as r (r.url)}
           <ResultCard result={r} />
         {/each}
       </div>
