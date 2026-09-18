@@ -1,7 +1,7 @@
 // LINE webhook の署名検証と Workers AI 出力境界の実行可能チェック
 import assert from 'node:assert/strict';
 // @ts-ignore The Worker entrypoint intentionally remains JavaScript and is exercised by Bun.
-import worker, { parseLineTrack, verifyLineSignature } from './src/worker.js';
+import worker, { parseLineTrack, parseWorkerTrack, verifyLineSignature } from './src/worker.js';
 
 const secret = 'line-test-secret';
 const body = new TextEncoder().encode('{"events":[]}');
@@ -33,6 +33,10 @@ assert.deepEqual(
   { title: 'Moving Day', artist: 'Samara Cyn' }
 );
 assert.deepEqual(parseLineTrack({ response: 'I found a link: https://example.com' }), { title: '', artist: '' });
+assert.deepEqual(
+  parseWorkerTrack({ response: '```json\n{"title":"Home Menu","artist":"Kazumi Totaka","elapsed":"0:03"}\n```' }),
+  { title: 'Home Menu', artist: 'Kazumi Totaka', elapsed: '0:03' }
+);
 
 const event = {
   type: 'message',
@@ -47,6 +51,8 @@ const eventBytes = new TextEncoder().encode(eventBody);
 const eventDigest = new Uint8Array(await crypto.subtle.sign('HMAC', key, eventBytes));
 const eventSignature = btoa(String.fromCharCode(...eventDigest));
 const calls: string[] = [];
+const rateKeys: string[] = [];
+let aiCalls = 0;
 let replyPayload: { messages: Array<{ text: string }> } | undefined;
 const originalFetch = globalThis.fetch;
 
@@ -77,14 +83,24 @@ try {
   const env = {
     LINE_CHANNEL_SECRET: secret,
     LINE_CHANNEL_ACCESS_TOKEN: 'test-line-access-token',
+    OCR_RATE_LIMITER: {
+      limit: async ({ key }: { key: string }) => {
+        rateKeys.push(key);
+        return { success: true };
+      },
+    },
     AI: {
       run: async (
         model: string,
-        input: { messages: Array<{ content: Array<{ image_url?: { url?: string } }> }> }
+        input: { messages: Array<{ content: Array<{ text?: string; image_url?: { url?: string } }> }> }
       ) => {
+        aiCalls += 1;
         assert.equal(model, '@cf/mistralai/mistral-small-3.1-24b-instruct');
         assert.match(input.messages[0].content[1].image_url?.url || '', /^data:image\/jpeg;base64,/);
-        return { response: '{"title":"Home Menu","artist":"Kazumi Totaka"}' };
+        const prompt = input.messages[0].content[0].text || '';
+        assert.doesNotMatch(prompt, /browser's local OCR/);
+        if (prompt.includes('elapsed')) assert.match(prompt, /elapsed playback time/);
+        return { response: '{"title":"Home Menu","artist":"Kazumi Totaka","elapsed":"0:03"}' };
       },
     },
   };
@@ -114,6 +130,66 @@ try {
   assert.ok(sentReply);
   assert.match(sentReply.messages[0].text, /Home Menu/);
   assert.match(sentReply.messages[0].text, /https:\/\/soundcloud\.com\/test\/home-menu/);
+  assert.ok(rateKeys.includes('line:test-user'));
+
+  const invalidOcr = await worker.fetch(
+    new Request('https://trackid.example/api/ocr', { method: 'POST', body: 'not an image', headers: { 'content-type': 'text/plain' } }),
+    env,
+    ctx
+  );
+  assert.equal(invalidOcr.status, 415);
+
+  const invalidMethod = await worker.fetch(
+    new Request('https://trackid.example/api/ocr', { method: 'GET' }),
+    env,
+    ctx
+  );
+  assert.equal(invalidMethod.status, 405);
+
+  const oversized = await worker.fetch(
+    new Request('https://trackid.example/api/ocr', {
+      method: 'POST',
+      body: new Uint8Array([1, 2, 3]),
+      headers: { 'content-type': 'image/jpeg', 'content-length': String(4 * 1024 * 1024 + 1) },
+    }),
+    env,
+    ctx
+  );
+  assert.equal(oversized.status, 413);
+
+  const ocr = await worker.fetch(
+    new Request('https://trackid.example/api/ocr', {
+      method: 'POST',
+      body: new Uint8Array([1, 2, 3]),
+      headers: {
+        'content-type': 'image/jpeg',
+        'cf-connecting-ip': '198.51.100.10',
+        'x-trackid-client-id': 'test-client-123456',
+      },
+    }),
+    env,
+    ctx
+  );
+  assert.equal(ocr.status, 200);
+  assert.deepEqual(await ocr.json(), { title: 'Home Menu', artist: 'Kazumi Totaka', elapsed: '0:03' });
+  assert.ok(rateKeys.includes('web-ip:198.51.100.10'));
+  assert.ok(rateKeys.includes('web-client:test-client-123456'));
+
+  const blocked = await worker.fetch(
+    new Request('https://trackid.example/api/ocr', {
+      method: 'POST',
+      body: new Uint8Array([1, 2, 3]),
+      headers: { 'content-type': 'image/jpeg', 'cf-connecting-ip': '198.51.100.10' },
+    }),
+    {
+      ...env,
+      OCR_RATE_LIMITER: { limit: async () => ({ success: false }) },
+    },
+    ctx
+  );
+  assert.equal(blocked.status, 429);
+  assert.equal(blocked.headers.get('retry-after'), '60');
+  assert.equal(aiCalls, 2);
 } finally {
   globalThis.fetch = originalFetch;
 }

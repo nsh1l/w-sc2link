@@ -1,15 +1,17 @@
 <script lang="ts">
-  import { parseOcrText, relScore } from './lib/parse';
-  import { recognizeImage } from './lib/ocr';
+  import { relScore } from './lib/parse';
   import ResultCard from './lib/ResultCard.svelte';
   import type { FallbackLink, SearchResult } from './lib/types';
+
+  const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+  const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+  const CLIENT_ID_STORAGE_KEY = 'ayp-trackid-client-id';
 
   // ---------- state ----------
   let file: File | null = $state(null);
   let previewUrl = $state('');
   let status = $state('');
   let busy = $state(false);
-  let ocrText = $state('');
   let title = $state('');
   let artist = $state('');
   let elapsed = $state('');
@@ -53,13 +55,21 @@
   }
 
   function handleFile(f: File | null) {
-    if (!f || !f.type.startsWith('image/')) {
+    if (!f || !SUPPORTED_IMAGE_TYPES.has(f.type.toLowerCase())) {
       setStatus('画像ファイルじゃないみたい… (＞人＜)');
+      return;
+    }
+    if (f.size > MAX_IMAGE_BYTES) {
+      setStatus('画像が大きすぎるよ… 4MB以下のスクショを選んでね');
       return;
     }
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     file = f;
     previewUrl = URL.createObjectURL(f);
+    title = '';
+    artist = '';
+    elapsed = '';
+    episode = '';
     results = [];
     resultsShown = false;
     searchError = '';
@@ -67,24 +77,53 @@
     void runOcr(f);
   }
 
-  async function runOcr(f: File) {
-    setStatus('OCR 準備中…', true);
+  async function runOcr(target: File) {
+    setStatus('Mistral AIで画像を解析中…', true);
     try {
-      const text = await recognizeImage(f, (pct) => setStatus(`OCR 解析中… ${pct}%`, true));
-      ocrText = text.trim() || '（テキストを読み取れなかったよ…）';
-      const parsed = parseOcrText(text);
-      title = parsed.title;
-      artist = parsed.artist;
-      elapsed = parsed.elapsed;
-      episode = parsed.episode;
-      setStatus(
-        parsed.title
-          ? '✅ 読み取れたよ、確認して検索ボタン押してね'
-          : '⚠️ 読み取れなかった…手で入力してね'
-      );
+      const res = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: {
+          'content-type': target.type,
+          'x-trackid-client-id': getClientId(),
+        },
+        body: target,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const error = new Error(typeof data.error === 'string' ? data.error : `Mistral OCR error ${res.status}`);
+        (error as Error & { status?: number }).status = res.status;
+        throw error;
+      }
+      if (file !== target) return;
+      const nextTitle = typeof data.title === 'string' ? data.title.trim() : '';
+      const nextArtist = typeof data.artist === 'string' ? data.artist.trim() : '';
+      const nextElapsed = typeof data.elapsed === 'string' ? data.elapsed.trim() : '';
+      if (!nextTitle && !nextArtist && !nextElapsed) throw new Error('Mistral OCR returned no fields');
+      title = nextTitle;
+      artist = nextArtist;
+      elapsed = nextElapsed;
+      episode = '';
+      setStatus(nextTitle ? '✅ 読み取れたよ、確認して検索ボタン押してね' : '⚠️ 曲名を読み取れなかった…手で入力してね');
     } catch (err) {
       console.error(err);
-      setStatus('OCR エラー…手で入力してね');
+      if (file === target) {
+        const statusCode = (err as Error & { status?: number }).status;
+        setStatus(statusCode === 429 ? '連続利用が多いみたい… 1分待ってからもう一度試してね' : 'Mistral AI OCRに失敗したよ… 曲情報を手で入力してね');
+      }
+    } finally {
+      if (file === target) busy = false;
+    }
+  }
+
+  function getClientId(): string {
+    try {
+      const stored = localStorage.getItem(CLIENT_ID_STORAGE_KEY) || '';
+      if (/^[A-Za-z0-9_-]{16,64}$/.test(stored)) return stored;
+      const id = crypto.randomUUID();
+      localStorage.setItem(CLIENT_ID_STORAGE_KEY, id);
+      return id;
+    } catch {
+      return '';
     }
   }
 
@@ -146,9 +185,12 @@
 
 <header class="site-header">
   <div class="brand">
-    <div class="vinyl" aria-hidden="true"><span class="vinyl-hole"></span></div>
+    <a class="ayp-logo-link" href="https://alwaysyesterday.party/" aria-label="Always Yesterday Party">
+      <img class="ayp-logo" src="/ayp-logo.jpg" alt="">
+    </a>
     <div class="brand-text">
-      <h1>AYP<span class="grad"> </span>TrackID</h1>
+      <p class="brand-kicker"><span class="signal-dot" aria-hidden="true"></span>Always Yesterday Party / Development</p>
+      <h1>AYP TrackID</h1>
       <p class="tagline">DJミックスのスクショから、いま流れてる曲のリンクを探す</p>
     </div>
   </div>
@@ -167,7 +209,7 @@
       ondragleave={() => (dragOver = false)}
       ondrop={onDrop}
     >
-      <input type="file" id="file-input" accept="image/*" class="visually-hidden" onchange={onFileChange} />
+      <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp" class="visually-hidden" onchange={onFileChange} />
       <div class="dz-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>
@@ -185,7 +227,7 @@
       <div class="preview-row">
         <img src={previewUrl} alt="アップロードしたスクショ" class="preview">
         <div class="fields">
-          <p class="step-label">📖 スクショから自動抽出（誤字は直接直せるよ）</p>
+          <p class="step-label">🤖 Mistral AIで自動抽出（誤字は直接直せるよ）</p>
           <label class="field">
             <span>曲名 / Track</span>
             <input
@@ -219,12 +261,11 @@
           <button class="btn-search" onclick={() => void doSearch()} disabled={searching}>
             {#if searching}検索中…{:else}🔍 曲のリンクを探す{/if}
           </button>
+          <div class="ai-ocr">
+            <p class="ai-note">画像はCloudflare Workers AI（Mistral）へ送信して解析します。1枚につき自動認識は1回で、連続利用には制限があります。</p>
+          </div>
         </div>
       </div>
-      <details class="raw">
-        <summary>OCRで読んだ全文（確認用）</summary>
-        <pre>{ocrText}</pre>
-      </details>
     </section>
   {/if}
 
@@ -260,5 +301,5 @@
     </section>
   {/if}
 
-  <p class="foot-note">曲情報はスクショのOCRで抽出しています。検索は SoundCloud / Deezer / Apple Music / YouTube をキーなしAPIで横断 🐾</p>
+  <p class="foot-note">曲情報はMistral AIの画像認識で抽出しています。検索は SoundCloud / Deezer / Apple Music / YouTube をキーなしAPIで横断 🐾</p>
 </main>

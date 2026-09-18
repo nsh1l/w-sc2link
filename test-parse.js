@@ -3,7 +3,7 @@
 const { parseOcrText, relScore } = require('/home/nsh1l/proj/w-sc2link/src/public/parse.js');
 const assert = require('node:assert');
 
-// 本物のスクショ (Soulection Radio #740) の Tesseract OCR 出力
+// 本物のスクショ (Soulection Radio #740) の保存済みOCR出力
 const ocrSample = `13:20 94 wlac@)
 SE tia
 >

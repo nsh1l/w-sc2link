@@ -7,7 +7,7 @@ DJミックスやロック画面の再生スクリーンショットをアップ
 ## できること
 
 1. **スクショをアップロード** — ドラッグ&ドロップ or タップで選択、`Ctrl`+`V` 貼り付けにも対応
-2. **ブラウザ内OCR** — Tesseract.js が画像を解析し、曲名・アーティスト・経過時間・エピソードを抽出（サーバーOCR不要・無料）
+2. **Mistral AI OCR** — 画像をCloudflare Workers AIへ1回送信し、曲名・アーティスト・経過時間を抽出（結果は編集可能）
 3. **曲リンクを検索** — 抽出結果は編集可能。正解度が高い順に結果を表示
 4. **LINE Bot** — スクショ画像を送ると、Workers AI が曲名・アーティストを読み取り候補リンクを返信
 
@@ -26,15 +26,15 @@ Web UIの検索はAPIキー不要です。LINE連携を使う場合だけ、LINE
 ## 技術スタック
 
 - [Svelte 5](https://svelte.dev/) + [Vite](https://vite.dev/) + TypeScript (strict) — SPA
-- [Cloudflare Workers](https://developers.cloudflare.com/workers/) — 静的アセット配信 + `/api/search` + LINE Webhook
-- [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) — LINE画像の曲情報抽出 (`mistral-small-3.1-24b-instruct`)
-- [Tesseract.js](https://tesseract.projectnaptha.com/) — ブラウザ内OCR
+- [Cloudflare Workers](https://developers.cloudflare.com/workers/) — 静的アセット配信 + `/api/search` + `/api/ocr` + LINE Webhook
+- [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) — Web画像OCRとLINE画像の曲情報抽出 (`mistral-small-3.1-24b-instruct`)
+- Cloudflare Workers Rate Limiting — `/api/ocr` とLINE画像認識の連打防止
 
 ## ディレクトリ構成
 
 ```
 src/
-  worker.js            # Worker本体 (dist配信 + /api/search + /api/line/webhook)
+  worker.js            # Worker本体 (dist配信 + /api/search + /api/ocr + /api/line/webhook)
   main.ts              # Svelteエントリポイント
   App.svelte           # メインUI (アップロード / OCR結果 / 検索)
   app.css              # ダークミュージックアプリ風スタイル
@@ -42,7 +42,6 @@ src/
     types.ts           # SearchResult / ParsedOcr などの型定義
     platforms.ts       # プラットフォームのメタデータ
     parse.ts           # OCRテキスト解析 (純関数・Nodeでもテスト可)
-    ocr.ts             # Tesseract.js ラッパー (CDN版, worker再利用)
     ResultCard.svelte  # 検索結果カード
 test-parse.ts          # parse.ts の実行可能チェック (bun)
 wrangler.toml          # Cloudflare Workers 設定 (assets = dist)
@@ -98,8 +97,9 @@ wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 
 ## 仕組みのメモ
 
-- Web UIのOCRはブラウザ側で実行するため、Web UIで選んだ画像はサーバーに送信されません。LINE Botの画像は、LINE Webhook処理のためWorkerからLINE Content APIへ取得し、Workers AIへ送信します。
-- OCR前に画像を2倍に拡大 → グレースケール → コントラスト正規化しています（小さい文字・ダークUIのスクショでも拾いやすくするため）。
-- OCRテキストの解析は純関数（`src/lib/parse.ts`）で、実スクショのOCR出力を回帰テスト（`test-parse.ts`）で検証しています。UIヘッダ・波形UIの飾り線・絵文字残骸・キャリア名/天気のステータスバー行・OCRのemダッシュ誤読などに対応。
+- Web UIで画像を選ぶと、Workerの`/api/ocr`へ1回だけ送信し、Workers AI（Mistral）が曲名・アーティスト・経過時間を構造化して返します。画像はブラウザ内OCRでは処理しません。
+- `/api/ocr` はJPEG/PNG/WebP、4MiB以下に限定し、Cloudflare Rate Limitingでクライアント識別子と接続元IPの両方を5回/60秒に制限します。LINE画像も送信者単位で同じ制限を受けます。制限は厳密な会計ではなく、連打・過剰利用を抑えるための防御です。
+- ブラウザは匿名のクライアントIDを`localStorage`に保存してレート制限へ送ります。IDを失っても、Cloudflare側の接続元IP制限が残ります。AIが利用できない場合は、抽出欄へ手入力して検索できます。
+- OCRテキストの解析は純関数（`src/lib/parse.ts`）で、既存スクリーンショット由来の回帰テスト（`test-parse.ts`）として保持しています。現行Web UIの認識本体はMistral AIです。
 - SoundCloud の公開 `client_id` は定期的にローテーションするため、ランタイムで `soundcloud.com` のJSチャンクから取得し、失敗時は既知値にフォールバックします。
 - 検索結果は「曲名・アーティストの単語一致 + 完全一致ボーナス」でスコアリングし、正解度が高い順にソートされます。
